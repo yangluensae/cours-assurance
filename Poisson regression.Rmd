@@ -1,0 +1,419 @@
+---
+title: "French auto insurance example"
+author: "Yang Lu"
+date: "23/10/2020"
+output: slidy_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# French auto insurance example
+
+This example is inspired from a working paper "Case Study: French Motor Third-Party Liability Claims" written by Prof. Mario Wuthrich and his team at ETHZ. It is publicly available at:
+
+
+https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3164764
+
+They used many methods, including Machine Learning ones, whereas we will focus on the Poisson regression.
+
+
+
+# Loading the dataset
+Package installation 
+```{r, eval=FALSE}
+install.packages(c("xts", "sp", "zoo"))
+install.packages("CASdatasets", repos = "http://dutangc.free.fr/pub/RRepos/", type="source")
+```
+ 
+Once installed, a package should be *loaded*: 
+```{r, message=FALSE, warning=FALSE, results='hide'}
+library(CASdatasets)
+```
+
+We can take a look at the documentation of this package
+```{r, eval=FALSE}
+?CASdatasets
+```
+
+Finally, we load the specific dataset
+```{r}
+data(freMTPL2freq)
+```
+
+MTPL= Motor Third Party Liability
+
+# Display the structure of the data
+
+```{r}
+str(freMTPL2freq)  
+```
+
+# Display the first few observations
+\tiny
+
+```{r, echo = TRUE}
+head(freMTPL2freq)  
+```
+
+# Some summary statistics
+
+As we can see there are quite a lot of covariates (or explanatory variables) and one variable of interest (ClaimsNb). 
+
+We can plot many figures and compute many summary statistics if we like, but for regression purpose, the most important ones are the following:
+
+First, check carefully the format of each covariate (continuous? categorical? binary?)
+
+Second, try to get a rough idea of the meaning of each covariate, and in particular, are there covariates that are clearly highly similar with each other? 
+
+# Breakdown of policies by region
+```{r}
+table(freMTPL2freq$Region)
+```
+
+# A pie chart
+```{r}
+pie(table(freMTPL2freq$Region), main="Number of policies from each region")
+```
+
+# Breakdown of policies by number of claims 
+
+```{r}
+table(freMTPL2freq$ClaimNb)
+```
+
+# A bar chart
+
+```{r}
+plot(table(freMTPL2freq$ClaimNb),xlab="number of accidents", ylab="policy counts")
+```
+
+Of course we can also use a pie chart as before. 
+# Breakdown by exposures
+
+```{r}
+hist(freMTPL2freq$Exposure)
+```
+
+# Some summary statistics
+## Number of claims Vs Region
+Our variable of interest is the number of claims. Let us see how each explanatory variable influences the variable of interest. We start with "Region".
+
+
+```{r}
+tapply(freMTPL2freq$ClaimNb, freMTPL2freq$Region, FUN=mean)
+```
+
+In other words we compute the expected number of claims given region. 
+# Number of claims Vs Area
+```{r}
+tapply(freMTPL2freq$ClaimNb, freMTPL2freq$Area, FUN=mean)
+```
+We see that the average number of claims differs a lot by area. This latter could be some kind of measure of the area of residence of the car owner. In particular, could it be linked to another continuous varialbe "Density"? 
+
+
+# Area Vs Density
+
+```{r}
+tapply(freMTPL2freq$Density, freMTPL2freq$Area, FUN=summary)
+```
+
+Thus Area seems like a discrete variable (a factor) created from the continuous variable Density. 
+
+# Area Vs Density cont. I
+We can also use more advanced visualization tools, in particular the ggplot2 package
+```{r,eval=F}
+install.packages("ggplot2")
+```
+
+
+```{r}
+library(ggplot2)
+```
+
+This package uses a completely different set of graphical tools that are more advanced than the standard R graphical commands.
+
+# Area Vs Density cont. II
+Then we plot the histogram of the (log-)density, for each of the six values of Area:
+
+```{r}
+ggplot(freMTPL2freq, aes(log(Density)))+geom_histogram(binwidth=0.1)+facet_wrap(~Area)
+```
+
+
+As a consequence, in the subsequent statistical analysis, we will use either Area, or Density. 
+
+# Number of claims Vs vehicle brand
+Average frequency for different vehicle brand
+```{r}
+tapply(freMTPL2freq$ClaimNb, freMTPL2freq$VehBrand, FUN=mean)
+```
+
+# Driver's age 
+Breakdown of the policies by driver's age 
+```{r}
+plot(table(freMTPL2freq$DrivAge))
+```
+ 
+ 
+# Number of claims Vs Driver's age
+Average frequency for each age between 18 and 1000
+
+```{r, eval=FALSE}
+tapply(freMTPL2freq$ClaimNb, freMTPL2freq$DrivAge, FUN=mean)
+``` 
+Then we make a plot
+```{r}
+plot(x=18:100, y=tapply(freMTPL2freq$ClaimNb, freMTPL2freq$DrivAge, FUN=mean),
+     xlab="age", ylab="average frequency",type="l")
+``` 
+
+# Vehicle power
+Breakdown of the policies by vehicle power
+```{r}
+plot(table(freMTPL2freq$VehPower))
+```
+
+# Number of claims Vs Vehicle power
+```{r}
+tapply(freMTPL2freq$ClaimNb, freMTPL2freq$VehPower, FUN=mean)
+``` 
+
+Thus, there are quite a lot of classes with large vehicle power (9,10,...), but each of them has a small market share, though. Moreover, these cars have similar average claim frequency. Thus we will try to combine these large values into a single class. 
+
+
+# Bonus-malus coefficient
+
+```{r}
+hist(freMTPL2freq$BonusMalus)
+```
+
+# Number of claims Vs Bonus-malus coefficient
+```{r, eval=FALSE}
+bmtable=tapply(freMTPL2freq$ClaimNb, freMTPL2freq$BonusMalus, FUN=mean)
+```
+
+We can plot the result directly, but we obtain a quite erratic curve due to the large number of bonus malus values. 
+```{r, eval=FALSE}
+plot(bmtable)
+```
+Instead, we will round the bonus-malus coefficients to multiple of 10's, capped at 150.
+
+```{r}
+bmtable2=tapply(freMTPL2freq$ClaimNb, floor(freMTPL2freq$BonusMalus/10),FUN=mean)
+plot(x=10*(5:15), y=bmtable2[1:11], 
+     type="p",xlab="Bonus-malus coefficient",ylab="average frequency")
+```
+
+# Number of claims Vs Bonus-malus coefficient cont.
+
+Thus the bonus-malus coefficient seems to have strong predictive power of the claim frequency. This is expected, since this coefficient is a summary of each driver's past driving history. 
+
+# Poisson regression
+
+In the following we will conduct a simple Poisson regression. 
+
+* Area: categorical (6 classes)
+
+* VehPower: we choose a categorical feature component where we merge vehicle power groups
+bigger and equal to 9 (totally 6 classes);
+
+* VehAge: continuous;
+
+* DrivAge: continuous; 
+
+* BonusMalus: continuous component;
+
+* VehBrand: categorical (12 classes);
+
+* VehGas: binary 
+
+* Region: categorical (22 classes)
+
+In particular, the non-binary, categorical variables should be transformed into factors in R. 
+
+# Pre-prossesing the covariates
+
+For categorical variables, we can check that it is already a factor
+```{r}
+is.factor(freMTPL2freq$Area)
+is.factor(freMTPL2freq$VehBrand)
+is.factor(freMTPL2freq$Region)
+```
+
+PS: if any one of them is not, we can use the function as.factor() to transform it into a factor.
+
+# Pre-processing cont.
+
+For VehPower,
+
+```{r}
+freMTPL2freq$VehPowerbis <- as.factor(pmin(freMTPL2freq$VehPower,9))
+```
+
+That is, we take, for each policy, the minimum between its value of VehPower and 9. This allows us to diminish the number of classes. 
+
+# Reminder of the Poisson regression
+Now we are done with the preliminary work.
+
+Remember that the regression model we want to fit is:
+
+$$Nb_i \sim \mathcal{P}(E_i \lambda_i)$$
+where $E_i$ is the exposure and $\lambda_i$ is the parameter of the Poisson variable (for a policy with exposure 1). 
+
+Under the log-linear specification, we assume:
+$$
+\lambda_i=\beta' X_i=\beta_0+ \sum_{k=1}^d \beta_i X_{i,k}.
+$$
+
+# The R command
+```{r}
+regression=glm ( formula = ClaimNb ~ VehPowerbis+ VehAge+ DrivAge +BonusMalus + VehBrand + VehGas + Region + Area, 
+                 family = poisson (), data = freMTPL2freq, offset = log(Exposure))
+```
+
+Then we display the result:
+```{r}
+summary(regression)
+```
+
+# Comments 
+
+  Similar as a linear regression, it is useful to check whether all the parameter estimates are significantly different from zero. If not, it might be beneficial to set these parameters to zero and re-do the regression, and compare the new regression result with the above one.
+
+  One important model selection tool is AIC/BIC. The AIC tends to favor model that overfit because it does not penalize sufficiently models with many parameters. BIC tends to better identify overfitted models. 
+
+  One issue with the function glm() in R is that it only provides AIC. So we will have to compute BIC manually. Recall the definitions:
+
+$$
+AIC=2k-2 \log L
+$$
+
+$$
+BIC=k \log(n)-2 \log L
+$$
+# Comments cont. I
+
+Thus $$
+BIC=AIC+k \log(n)-2k 
+$$
+
+# Computing BIC 
+A simple program to compute BIC is the following. First, we compute the number of policies $n$:
+```{r}
+n=dim(freMTPL2freq)[1]
+```
+
+Then the number of parameters $k$
+```{r}
+k=length(regression$coefficients)
+```
+
+And finally the BIC
+```{r}
+regression$bic=regression$aic+k*log(n)-2*k
+regression$bic
+```
+
+# Eliminating non statistically significant coefficients
+
+* Here we can check that most of the parameter estimates that are not significant concern the values of Vehicle Brand and Region.  
+
+* For Brand, Vehicles of Brand B12 are significantly different from vehicles of Brand B1 (the reference value), at 0.001 (that is 0.1 $\%$) level. There are two other brands whose coefficients are significant, but only at $5\%$ level, and these coefficients are anyway quite small. Thus we will retain only one special case: B12. 
+
+* More precisely, we will create a new dummy variable:
+```{r}
+freMTPL2freq$VehBrand12=(freMTPL2freq$VehBrand=="B12")
+table(freMTPL2freq$VehBrand12)
+```
+
+# Eliminating non statistically significant coefficients cont. I
+
+We can also try to understand the pecularity of this brand. For instance we can explore the distribution of each of other covariates, and for given values of VehBrand. For instance, for VehAge, we plot 12 histograms:
+
+```{r}
+ggplot(freMTPL2freq, aes(VehAge))+geom_histogram(binwidth=1)+facet_wrap(~VehBrand)
+```
+
+We can see a huge number of policies of Brand 12 have an age of 0 or 1 year. Thus many of these cars might come from a same business (e.g. a car dealer of Brand 12 selling cars and insurance policies altogether). 
+
+NB: Prof. Wuthrich's working paper speculates that these cars might come from a rental company. My personal opinion is that this is less likely. 
+
+
+# Eliminating non statistically significant coefficients cont. II
+
+For Region, there are two regions (Auvergne and Limousin, who border each other) with coefficients that are significant at $5\%$ level, but these coefficients are quite different from zero. So we will single these two regions out, by creating two dummy variables. 
+
+```{r}
+freMTPL2freq$Auvergne=(freMTPL2freq$Region=="Auvergne")
+freMTPL2freq$Limousin=(freMTPL2freq$Region=="Limousin")
+```
+ 
+```{r}
+table(freMTPL2freq$Auvergne)
+table(freMTPL2freq$Limousin)
+```
+
+# Estimating new models 
+* Now we can propose at least two new, competing models, Model 2 and Model 3.
+
+* Model 2 is obtained from Model 1 by replacing the categorical variable VehBrand by the dummy VehBrand12.
+
+* Model 3 is obtained from Model 2 by replacing the categorical variable Region by the two dummies Auvergne and Limousin.
+
+# The R program: Model 2
+```{r}
+regression2=glm ( formula = ClaimNb ~ VehPowerbis+ VehAge+ DrivAge +BonusMalus + VehBrand12 + VehGas +Region+ Area, 
+                 family = poisson (), data = freMTPL2freq, offset = log(Exposure))
+```
+```{r,results='hide'}
+summary(regression2)
+```
+Then we compute the BIC:
+
+```{r}
+k2=length(regression2$coefficients)
+
+regression2$bic=regression2$aic-2*k2+k2*log(n)
+regression2$bic
+```
+
+# The R program: Model 3
+```{r}
+regression3=glm ( formula = ClaimNb ~ VehPowerbis+ VehAge+ DrivAge +BonusMalus + VehBrand12 + VehGas +Auvergne+Limousin+ Area, 
+                 family = poisson (), data = freMTPL2freq, offset = log(Exposure))
+```
+```{r,results='hide'}
+summary(regression2)
+```
+Then we compute the BIC:
+
+```{r}
+k3=length(regression3$coefficients)
+
+regression3$bic=regression3$aic-2*k3+k3*log(n)
+regression3$bic
+```
+
+# Model comparison
+In terms of BIC:
+```{r}
+rank(c(regression$bic,regression2$bic,regression3$bic))
+```
+
+Whereas in terms of BIC:
+
+```{r}
+rank(c(regression$aic,regression2$aic,regression3$aic))
+```
+ 
+# Further analysis
+
+* Besides using AIC/BIC, it is also possible to separate the dataset into a training sample and testing sample, and estimate various models first on the training sample, and then test their performance on the testing sample.
+
+* We refer to the case study of Prof. Wuthrich for more details. 
+
+* Finally, to summarize, as we can see in this exercise, preliminary analysis and data visualization is a *major* part of the whole model building process. 
+
+* In fact, the Poisson regression model can be replaced quite easily by any other standard machine learning models, but most of the preliminary analysis we did above remain useful.  
